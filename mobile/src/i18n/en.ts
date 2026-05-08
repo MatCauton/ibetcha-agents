@@ -114,6 +114,23 @@ const en = {
   activeBetsTitle: 'Active Bets',
   recentResults: 'Recent Results',
 
+  // Evidence
+  addEvidence: 'Add Evidence',
+  evidenceUploaded: 'Evidence uploaded',
+  evidenceUploadSuccess: 'Your evidence has been added to this bet.',
+  evidenceUploadError: 'Failed to upload evidence. Please try again.',
+  evidenceSelectPrompt: 'Select media',
+  evidenceEmpty: 'No evidence uploaded yet',
+
+  // Win Card
+  viewWinCard: 'View Win Card',
+  winCardTitle: 'Win Card',
+  winCardWinner: 'WINNER',
+  winCardLoser: 'LOSER',
+  winCardShare: 'Share',
+  winCardHeadToHead: "You're {wins}-{losses} against {name} all time",
+  winCardShareMessage: 'I won the bet: {description}. Stake: {stake}. – iBetcha',
+
   // Errors
   networkError: 'Network error. Please check your connection.',
   sessionExpired: 'Session expired. Please log in again.',

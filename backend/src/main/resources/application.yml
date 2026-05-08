@@ -33,7 +33,7 @@ ibetcha:
     issuer: ibetcha
     access-token-expiry-minutes: 15
     refresh-token-expiry-days: 30
-  s3:
-    bucket-name: ibetcha-evidence
+  aws:
     region: eu-west-1
-    presigned-url-expiry-minutes: 15
+    s3:
+      evidence-bucket-name: ${IBETCHA_S3_EVIDENCE_BUCKET:ibetcha-evidence-dev}

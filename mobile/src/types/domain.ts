@@ -77,10 +77,23 @@ export interface Participant {
 
 export interface Evidence {
   evidenceId: string;
-  type: EvidenceType;
-  url: string;
-  uploadedBy: string;
+  s3Key: string;
+  contentType: string;
+  fileName: string;
   uploadedAt: string;
+  uploadedBy: string;
+}
+
+export interface WinCard {
+  betId: string;
+  title: string;
+  description: string;
+  stake: string;
+  winner: { userId: string; displayName: string };
+  loser: { userId: string; displayName: string } | null;
+  allParticipants: Array<{ userId: string; displayName: string; won: boolean }>;
+  resolvedAt: string;
+  headToHeadRecord: { wins: number; losses: number } | null;
 }
 
 export interface OutcomeVote {

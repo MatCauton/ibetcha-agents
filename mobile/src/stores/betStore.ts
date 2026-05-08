@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Bet } from '../types/domain';
+import type { Bet, Evidence } from '../types/domain';
 import type { CreateBetRequest } from '../types/api';
 import * as betsApi from '../api/bets';
 
@@ -11,6 +11,8 @@ interface BetState {
   error: string | null;
   hasMore: boolean;
   cursor: string | undefined;
+  evidence: Evidence[];
+  evidenceLoading: boolean;
 
   fetchBets: (refresh?: boolean) => Promise<void>;
   fetchMoreBets: () => Promise<void>;
@@ -22,6 +24,8 @@ interface BetState {
   voteBet: (betId: string, vote: 'APPROVE' | 'DISPUTE') => Promise<void>;
   concedeBet: (betId: string) => Promise<void>;
   submitJuryVerdict: (betId: string, approved: boolean, winnerId?: string) => Promise<void>;
+  fetchEvidence: (betId: string) => Promise<void>;
+  uploadEvidence: (betId: string, uri: string, contentType: string, fileName: string) => Promise<void>;
   clearCurrentBet: () => void;
   clearError: () => void;
 }
@@ -34,6 +38,8 @@ export const useBetStore = create<BetState>((set, get) => ({
   error: null,
   hasMore: false,
   cursor: undefined,
+  evidence: [],
+  evidenceLoading: false,
 
   fetchBets: async (refresh = false) => {
     if (refresh) {
@@ -218,6 +224,40 @@ export const useBetStore = create<BetState>((set, get) => ({
       const message =
         err instanceof Error ? err.message : 'Failed to submit jury verdict';
       set({ error: message });
+      throw err;
+    }
+  },
+
+  fetchEvidence: async (betId: string) => {
+    set({ evidenceLoading: true });
+    try {
+      const items = await betsApi.getEvidence(betId);
+      set({ evidence: items, evidenceLoading: false });
+    } catch {
+      set({ evidenceLoading: false });
+    }
+  },
+
+  uploadEvidence: async (betId: string, uri: string, contentType: string, fileName: string) => {
+    set({ evidenceLoading: true });
+    try {
+      const { uploadUrl, s3Key } = await betsApi.getEvidenceUploadUrl(betId, contentType);
+
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: blob,
+      });
+
+      const registered = await betsApi.registerEvidence(betId, { s3Key, contentType, fileName });
+      set((state) => ({
+        evidence: [...state.evidence, registered],
+        evidenceLoading: false,
+      }));
+    } catch (err: unknown) {
+      set({ evidenceLoading: false });
       throw err;
     }
   },

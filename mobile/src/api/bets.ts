@@ -8,7 +8,7 @@ import type {
   VoteBetRequest,
   VoteBetResponse,
 } from '../types/api';
-import type { Bet } from '../types/domain';
+import type { Bet, Evidence, WinCard } from '../types/domain';
 
 export async function fetchBets(params?: {
   status?: string;
@@ -94,5 +94,44 @@ export async function submitJuryVerdict(
     `/bets/${betId}/jury/verdict`,
     { approved, winnerId: winnerId ?? null },
   );
+  return response.data;
+}
+
+export interface EvidenceUploadUrlResponse {
+  uploadUrl: string;
+  s3Key: string;
+  contentType: string;
+  expiresIn: number;
+}
+
+export async function getEvidenceUploadUrl(
+  betId: string,
+  contentType: string,
+): Promise<EvidenceUploadUrlResponse> {
+  const response = await apiClient.get<EvidenceUploadUrlResponse>(
+    `/bets/${betId}/evidence/upload-url`,
+    { params: { contentType } },
+  );
+  return response.data;
+}
+
+export async function registerEvidence(
+  betId: string,
+  data: { s3Key: string; contentType: string; fileName: string },
+): Promise<Evidence> {
+  const response = await apiClient.post<Evidence>(
+    `/bets/${betId}/evidence`,
+    data,
+  );
+  return response.data;
+}
+
+export async function getEvidence(betId: string): Promise<Evidence[]> {
+  const response = await apiClient.get<Evidence[]>(`/bets/${betId}/evidence`);
+  return response.data;
+}
+
+export async function getWinCard(betId: string): Promise<WinCard> {
+  const response = await apiClient.get<WinCard>(`/bets/${betId}/win-card`);
   return response.data;
 }
