@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAuth } from '../src/hooks/useAuth';
 import { usePushNotifications } from '../src/hooks/usePushNotifications';
 import { colors } from '../src/theme/colors';
@@ -27,13 +28,19 @@ export default function RootLayout() {
 
   if (!isInitialized) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <SafeAreaProvider>
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
-  return <Slot />;
+  return (
+    <SafeAreaProvider>
+      <Slot />
+    </SafeAreaProvider>
+  );
 }
 
 const styles = StyleSheet.create({

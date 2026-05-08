@@ -1,8 +1,13 @@
 package com.ibetcha.wagering.api;
 
+import com.ibetcha.identity.domain.User;
+import com.ibetcha.identity.infrastructure.UserRepository;
 import com.ibetcha.shared.security.AuthenticatedUser;
 import com.ibetcha.wagering.application.BetService;
-import com.ibetcha.wagering.domain.*;
+import com.ibetcha.wagering.domain.Bet;
+import com.ibetcha.wagering.domain.BetParticipant;
+import com.ibetcha.wagering.domain.BetStatus;
+import com.ibetcha.wagering.domain.OutcomeVote;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -13,15 +18,18 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/bets")
 public class BetController {
 
     private final BetService betService;
+    private final UserRepository userRepository;
 
-    public BetController(BetService betService) {
+    public BetController(BetService betService, UserRepository userRepository) {
         this.betService = betService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping
@@ -39,7 +47,6 @@ public class BetController {
         );
 
         List<BetParticipant> participants = betService.getParticipants(bet.getId());
-
         return ResponseEntity.status(HttpStatus.CREATED).body(buildBetResponse(bet, participants));
     }
 
@@ -74,6 +81,20 @@ public class BetController {
         ));
     }
 
+    @PostMapping("/{betId}/decline")
+    public ResponseEntity<Map<String, Object>> declineBet(@PathVariable UUID betId) {
+        UUID userId = AuthenticatedUser.currentUserId();
+        betService.declineBet(betId, userId);
+        return ResponseEntity.ok(Map.of("betId", betId, "status", "DECLINED"));
+    }
+
+    @PostMapping("/{betId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancelBet(@PathVariable UUID betId) {
+        UUID userId = AuthenticatedUser.currentUserId();
+        betService.cancelBet(betId, userId);
+        return ResponseEntity.ok(Map.of("betId", betId, "status", "CANCELLED"));
+    }
+
     @PostMapping("/{betId}/complete")
     public ResponseEntity<Map<String, Object>> completeBet(
             @PathVariable UUID betId,
@@ -88,6 +109,17 @@ public class BetController {
                         "declaredBy", claimantId,
                         "approvalStatus", bet.getStatus() == BetStatus.RESOLVED ? "APPROVED" : "PENDING"
                 )
+        ));
+    }
+
+    @PostMapping("/{betId}/concede")
+    public ResponseEntity<Map<String, Object>> concedeBet(@PathVariable UUID betId) {
+        UUID userId = AuthenticatedUser.currentUserId();
+        Bet bet = betService.concedeBet(betId, userId);
+        return ResponseEntity.ok(Map.of(
+                "betId", bet.getId(),
+                "status", bet.getStatus().name(),
+                "winnerId", bet.getWinnerId() != null ? bet.getWinnerId() : ""
         ));
     }
 
@@ -118,13 +150,48 @@ public class BetController {
         ));
     }
 
+    // ── Response builder ──────────────────────────────────────────────────────
+
     private Map<String, Object> buildBetResponse(Bet bet, List<BetParticipant> participants) {
-        List<Map<String, Object>> participantList = participants.stream()
+        // Batch-fetch all users involved in this bet
+        Set<UUID> userIds = new HashSet<>();
+        participants.forEach(p -> userIds.add(p.getUserId()));
+        if (bet.getJuryId() != null) userIds.add(bet.getJuryId());
+
+        Map<UUID, User> userMap = userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        // Split creator vs invitees
+        BetParticipant creatorParticipant = participants.stream()
+                .filter(p -> p.getRole() == BetParticipant.ParticipantRole.CREATOR)
+                .findFirst()
+                .orElse(null);
+
+        List<BetParticipant> invitees = participants.stream()
+                .filter(p -> p.getRole() == BetParticipant.ParticipantRole.INVITEE)
+                .toList();
+
+        // Build creator object
+        Map<String, Object> creatorObj = new LinkedHashMap<>();
+        if (creatorParticipant != null) {
+            User creatorUser = userMap.get(creatorParticipant.getUserId());
+            creatorObj.put("userId", creatorParticipant.getUserId());
+            creatorObj.put("displayName", creatorUser != null ? creatorUser.getDisplayName() : "Unknown");
+            if (creatorUser != null && creatorUser.getAvatarUrl() != null) {
+                creatorObj.put("avatarUrl", creatorUser.getAvatarUrl());
+            }
+        }
+
+        // Build invitee participant list
+        List<Map<String, Object>> participantList = invitees.stream()
                 .map(p -> {
+                    User user = userMap.get(p.getUserId());
                     Map<String, Object> pm = new LinkedHashMap<>();
                     pm.put("userId", p.getUserId());
-                    pm.put("role", p.getRole().name());
+                    pm.put("displayName", user != null ? user.getDisplayName() : "Unknown");
+                    if (user != null && user.getAvatarUrl() != null) pm.put("avatarUrl", user.getAvatarUrl());
                     pm.put("status", p.getResponseStatus().name());
+                    if (p.getRespondedAt() != null) pm.put("acceptedAt", p.getRespondedAt());
                     return pm;
                 })
                 .toList();
@@ -135,16 +202,28 @@ public class BetController {
         response.put("stake", bet.getStake());
         response.put("status", bet.getStatus().name());
         response.put("createdAt", bet.getCreatedAt());
-        response.put("acceptanceDeadline", bet.getAcceptanceDeadline());
+        response.put("creator", creatorObj);
         response.put("participants", participantList);
 
         if (bet.getTitle() != null) response.put("title", bet.getTitle());
-        if (bet.getJuryId() != null) response.put("juryId", bet.getJuryId());
+        if (bet.getAcceptanceDeadline() != null) response.put("acceptanceDeadline", bet.getAcceptanceDeadline());
         if (bet.getWinnerId() != null) response.put("winnerId", bet.getWinnerId());
         if (bet.getResolvedAt() != null) response.put("resolvedAt", bet.getResolvedAt());
 
+        // Jury
+        if (bet.getJuryId() != null) {
+            User juryUser = userMap.get(bet.getJuryId());
+            Map<String, Object> juryObj = new LinkedHashMap<>();
+            juryObj.put("userId", bet.getJuryId());
+            juryObj.put("displayName", juryUser != null ? juryUser.getDisplayName() : "Unknown");
+            if (juryUser != null && juryUser.getAvatarUrl() != null) juryObj.put("avatarUrl", juryUser.getAvatarUrl());
+            response.put("jury", juryObj);
+        }
+
         return response;
     }
+
+    // ── Request records ───────────────────────────────────────────────────────
 
     public record CreateBetRequest(
             @NotBlank @Size(min = 1, max = 500) String description,

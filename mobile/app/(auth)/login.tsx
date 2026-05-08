@@ -139,6 +139,33 @@ export default function LoginScreen() {
             <Text style={styles.subtitle}>Welcome back</Text>
           </View>
 
+          {/* Dev quick-login — only visible in development builds */}
+          {__DEV__ && (
+            <View style={styles.devPanel}>
+              <Text style={styles.devLabel}>DEV LOGIN</Text>
+              <View style={styles.devButtons}>
+                <TouchableOpacity
+                  style={styles.devButton}
+                  onPress={() => login({ email: 'alice@ibetcha.test', password: 'password' })}
+                >
+                  <Text style={styles.devButtonText}>Alice</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.devButton}
+                  onPress={() => login({ email: 'bob@ibetcha.test', password: 'password' })}
+                >
+                  <Text style={styles.devButtonText}>Bob</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.devButton}
+                  onPress={() => login({ email: 'charlie@ibetcha.test', password: 'password' })}
+                >
+                  <Text style={styles.devButtonText}>Charlie</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {error && (
             <View style={styles.errorBanner}>
               <Text style={styles.errorBannerText}>{t('loginError')}</Text>
@@ -221,6 +248,7 @@ export default function LoginScreen() {
               <Text style={styles.footerLink}>{t('signUp')}</Text>
             </TouchableOpacity>
           </View>
+
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -337,5 +365,38 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
     color: colors.primary,
+  },
+
+  // Dev panel
+  devPanel: {
+    marginBottom: spacing.md,
+    padding: spacing.sm,
+    borderRadius: 8,
+    backgroundColor: '#FFF9C4',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  devLabel: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    color: '#92400E',
+    letterSpacing: 1,
+  },
+  devButtons: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  devButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: 6,
+    backgroundColor: '#F59E0B',
+  },
+  devButtonText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: '#FFFFFF',
   },
 });

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { storageGet, storageSet, storageDelete } from '../utils/storage';
 import type { User } from '../types/domain';
 import * as authApi from '../api/auth';
-import { setTokens, clearTokens, getAccessToken, getRefreshToken } from '../api/client';
+import { setTokens, clearTokens, getAccessToken, getRefreshToken, setAuthExpiredCallback } from '../api/client';
 import type { LoginRequest, RegisterRequest } from '../types/api';
 
 interface AuthState {
@@ -137,3 +137,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   clearError: () => set({ error: null }),
 }));
+
+// When the Axios interceptor can't refresh the token, clear auth state so
+// the root layout redirects back to the login screen.
+setAuthExpiredCallback(() => {
+  useAuthStore.setState({ user: null, isAuthenticated: false, error: null });
+});

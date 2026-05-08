@@ -6,21 +6,25 @@ import { useAuthStore } from '../stores/authStore';
 import { registerDeviceToken } from '../api/notifications';
 
 // Handle notifications when the app is in the foreground: show an alert.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Guard against web — expo-notifications requires VAPID config on web.
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 /**
  * Requests push notification permissions, registers the Expo push token with
  * the backend, and wires up foreground/tap handlers.
  *
  * Call this hook once in the root layout after auth is initialized.
+ * No-op on web (push notifications require native device support).
  */
 export function usePushNotifications(): void {
   const { isAuthenticated } = useAuthStore();
@@ -30,6 +34,7 @@ export function usePushNotifications(): void {
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (Platform.OS === 'web') return;
 
     let cancelled = false;
 

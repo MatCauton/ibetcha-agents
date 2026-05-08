@@ -8,6 +8,13 @@ const BASE_URL = Platform.select({
   default: 'http://localhost:8080/api/v1',
 });
 
+// Registered by authStore to clear auth state when token refresh fails.
+// Avoids a circular dependency (authStore → client → authStore).
+let onAuthExpired: (() => void) | null = null;
+export function setAuthExpiredCallback(cb: () => void): void {
+  onAuthExpired = cb;
+}
+
 const TOKEN_KEY = 'ibetcha_access_token';
 const REFRESH_TOKEN_KEY = 'ibetcha_refresh_token';
 
@@ -111,11 +118,12 @@ apiClient.interceptors.response.use(
     } catch (refreshError) {
       processQueue(refreshError, null);
 
-      // Clear tokens on refresh failure
       await storageDelete(TOKEN_KEY);
       await storageDelete(REFRESH_TOKEN_KEY);
 
-      // The auth store listener will handle redirect to login
+      // Notify auth store so it clears isAuthenticated and triggers redirect to login
+      onAuthExpired?.();
+
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

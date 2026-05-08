@@ -5,14 +5,20 @@ import com.ibetcha.reputation.application.StatsService;
 import com.ibetcha.shared.exception.ApiException;
 import com.ibetcha.social.application.FriendshipService;
 import com.ibetcha.wagering.domain.*;
-import com.ibetcha.wagering.infrastructure.*;
+import com.ibetcha.wagering.infrastructure.BetParticipantRepository;
+import com.ibetcha.wagering.infrastructure.BetRepository;
+import com.ibetcha.wagering.infrastructure.OutcomeClaimRepository;
+import com.ibetcha.wagering.infrastructure.OutcomeVoteRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.*;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 @Service
 public class BetService {
@@ -122,6 +128,56 @@ public class BetService {
         }
 
         return betRepository.findById(betId).orElse(bet);
+    }
+
+    @Transactional
+    public void declineBet(UUID betId, UUID userId) {
+        Bet bet = getBetOrThrow(betId);
+        if (bet.getStatus() != BetStatus.PENDING_ACCEPTANCE) {
+            throw ApiException.conflict("Bet is not in PENDING_ACCEPTANCE state");
+        }
+        BetParticipant participant = participantRepository.findByBetIdAndUserId(betId, userId)
+                .orElseThrow(() -> ApiException.forbidden("You are not a participant in this bet"));
+        if (!participant.isPending()) {
+            throw ApiException.conflict("You have already responded to this bet");
+        }
+        participant.decline();
+        participantRepository.save(participant);
+
+        // Cancel if no pending invitees remain and fewer than 2 accepted
+        long acceptedCount = participantRepository.countByBetIdAndResponseStatus(betId, BetParticipant.ResponseStatus.ACCEPTED);
+        long pendingCount  = participantRepository.countByBetIdAndResponseStatus(betId, BetParticipant.ResponseStatus.PENDING);
+        if (pendingCount == 0 && acceptedCount < 2) {
+            bet.cancel();
+            betRepository.save(bet);
+        }
+    }
+
+    @Transactional
+    public void cancelBet(UUID betId, UUID userId) {
+        Bet bet = getBetOrThrow(betId);
+        if (!bet.getCreatorId().equals(userId)) {
+            throw ApiException.forbidden("Only the creator can cancel a bet");
+        }
+        bet.cancel();
+        betRepository.save(bet);
+    }
+
+    @Transactional
+    public Bet concedeBet(UUID betId, UUID userId) {
+        Bet bet = getBetOrThrow(betId);
+        if (bet.getStatus() != BetStatus.ACTIVE) {
+            throw ApiException.conflict("Bet is not active");
+        }
+        // Find the other accepted participant (the winner)
+        UUID winnerId = participantRepository.findByBetId(betId).stream()
+                .filter(BetParticipant::isAccepted)
+                .map(BetParticipant::getUserId)
+                .filter(id -> !id.equals(userId))
+                .findFirst()
+                .orElseThrow(() -> ApiException.badRequest("Cannot determine opponent"));
+
+        return completeBet(betId, userId, winnerId);
     }
 
     @Transactional
