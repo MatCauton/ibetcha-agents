@@ -61,7 +61,7 @@ CREATE TABLE users (
     CONSTRAINT ck_users_username_format
         CHECK (username ~ '^[a-zA-Z0-9_.]{3,30}$'),
     CONSTRAINT ck_users_auth_provider
-        CHECK (auth_provider IN ('EMAIL', 'GOOGLE', 'APPLE')),
+        CHECK (auth_provider IN ('EMAIL', 'GOOGLE', 'APPLE', 'SYSTEM')),
     CONSTRAINT ck_users_account_status
         CHECK (account_status IN ('ACTIVE', 'DELETION_PENDING', 'DELETED')),
     CONSTRAINT ck_users_bio_length
@@ -69,7 +69,8 @@ CREATE TABLE users (
     CONSTRAINT ck_users_password_or_oauth
         CHECK (
             (auth_provider = 'EMAIL' AND password_hash IS NOT NULL)
-            OR (auth_provider != 'EMAIL' AND provider_id IS NOT NULL)
+            OR (auth_provider IN ('GOOGLE', 'APPLE') AND provider_id IS NOT NULL)
+            OR (auth_provider = 'SYSTEM')  -- sentinel/system accounts have neither password nor OAuth
         )
 );
 ```
@@ -179,8 +180,17 @@ CREATE INDEX idx_friendships_lower_active ON friendships (user_id_lower, status)
 CREATE INDEX idx_friendships_higher_active ON friendships (user_id_higher, status)
     WHERE status = 'ACTIVE';
 
--- Pending friend requests for a user (receiver side)
+-- Pending friend requests sent by a user (requester side)
 CREATE INDEX idx_friendships_pending ON friendships (status, requester_id)
+    WHERE status = 'PENDING';
+
+-- Pending friend requests received by a user (addressee side)
+-- Serves "show me my pending friend requests" which filters on the non-requester user.
+-- Since the addressee is whichever of user_id_lower/user_id_higher is not the requester_id,
+-- we add two partial indexes covering both sides for PENDING status.
+CREATE INDEX idx_friendships_pending_lower ON friendships (user_id_lower)
+    WHERE status = 'PENDING';
+CREATE INDEX idx_friendships_pending_higher ON friendships (user_id_higher)
     WHERE status = 'PENDING';
 
 -- Friendship check: are two users friends? (used by Wagering context on bet creation)
@@ -190,6 +200,7 @@ CREATE INDEX idx_friendships_pending ON friendships (status, requester_id)
 **Index rationale:**
 - The friendship check query `WHERE (user_id_lower, user_id_higher) = (min(A,B), max(A,B)) AND status = 'ACTIVE'` is critical for bet creation validation (Wagering queries Social). The unique constraint index serves this.
 - Two partial indexes for friend list queries: a user can appear in either `user_id_lower` or `user_id_higher`. Separate indexes allow index-only scans for each side, which PostgreSQL can UNION efficiently.
+- `idx_friendships_pending_lower` / `idx_friendships_pending_higher`: The "show me my pending friend requests" query (received requests) filters on the addressee, not the requester. Since the addressee is whichever of `user_id_lower`/`user_id_higher` is NOT the `requester_id`, two partial pending indexes covering both columns serve this query efficiently. PostgreSQL can use a BitmapOr of both indexes to find all pending requests where the user appears on either side, then the application filters out rows where `requester_id = userId` to get only received requests.
 
 ---
 
@@ -228,13 +239,13 @@ CREATE INDEX idx_blocks_blocked ON blocks (blocked_id);
 
 Owner: Social Context
 
+Design: A link is shareable (e.g., posted to WhatsApp) and can be redeemed by multiple new users. Redemption tracking is not on the `invite_links` row itself; instead, the act of accepting a friend request after clicking the link constitutes the redemption. Links do not expire for MVP (DDD InviteLink invariant I2).
+
 ```sql
 CREATE TABLE invite_links (
     id              UUID            PRIMARY KEY,
     inviter_id      UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     referral_code   VARCHAR(20)     NOT NULL,
-    redeemed_by     UUID            REFERENCES users(id) ON DELETE SET NULL,
-    redeemed_at     TIMESTAMPTZ,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
     CONSTRAINT uq_invite_links_code UNIQUE (referral_code)
@@ -250,6 +261,8 @@ CREATE TABLE invite_links (
 -- Inviter's links (for profile/stats, low priority)
 CREATE INDEX idx_invite_links_inviter ON invite_links (inviter_id);
 ```
+
+**Multi-use rationale:** The original design had `redeemed_by` and `redeemed_at` columns, which limited each link to a single redemption. The intended use case is sharing a WhatsApp link that multiple friends can click. With the multi-use design, each new user who opens the invite link goes through the registration flow, and the system automatically sends a friend request from the inviter to the new user on account creation. If per-redemption tracking is needed in the future (e.g., to count how many signups a user generated), add an `invite_redemptions` table with `(invite_link_id, redeemed_by, redeemed_at)` as a separate concern.
 
 ---
 
@@ -272,6 +285,7 @@ CREATE TABLE bets (
     evidence_required       BOOLEAN         NOT NULL DEFAULT FALSE,
     winner_id               UUID            REFERENCES users(id),
     acceptance_deadline     TIMESTAMPTZ     NOT NULL,  -- created_at + 48h
+    jury_deadline           TIMESTAMPTZ,               -- set when bet enters PENDING_JURY_VERDICT; created_at + 7d from claim
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     resolved_at             TIMESTAMPTZ,
@@ -319,6 +333,10 @@ CREATE INDEX idx_bets_creator ON bets (creator_id, status);
 CREATE INDEX idx_bets_jury_pending ON bets (jury_id)
     WHERE jury_id IS NOT NULL AND status IN ('PENDING_JURY_VERDICT');
 
+-- Jury timeout scheduler: find bets in PENDING_JURY_VERDICT past the 7-day deadline
+CREATE INDEX idx_bets_jury_deadline ON bets (jury_deadline)
+    WHERE status = 'PENDING_JURY_VERDICT';
+
 -- Resolved bets: for stats rebuild, history
 CREATE INDEX idx_bets_resolved ON bets (resolved_at DESC)
     WHERE status = 'RESOLVED';
@@ -331,6 +349,7 @@ CREATE INDEX idx_bets_updated ON bets (updated_at DESC);
 - `idx_bets_status`: Partial index excluding terminal states. Home screen queries filter by non-terminal status. This index is small (only active/pending bets) and fast.
 - `idx_bets_acceptance_deadline`: The timeout scheduler queries `WHERE status = 'PENDING_ACCEPTANCE' AND acceptance_deadline < NOW()`. Partial index ensures only pending bets are scanned.
 - `idx_bets_jury_pending`: Jury review screen queries pending verdicts for a specific jury user. Partial index keeps this extremely small.
+- `idx_bets_jury_deadline`: The timeout scheduler queries `WHERE status = 'PENDING_JURY_VERDICT' AND jury_deadline < NOW()` every 60 seconds. This partial index (only rows in PENDING_JURY_VERDICT state) keeps the scan fast even at millions of bets. The `jury_deadline` column is set when the bet transitions to PENDING_JURY_VERDICT (calculated as `outcome_claim.created_at + 7 days`).
 
 ---
 
@@ -1328,7 +1347,8 @@ DELETE FROM users WHERE id = :deletedUserId;
 
 ```sql
 INSERT INTO users (id, email, username, display_name, auth_provider, email_verified, account_status, created_at, updated_at)
-VALUES ('00000000-0000-0000-0000-000000000000', 'deleted@ibetcha.internal', '_deleted_user_', '[Deleted User]', 'EMAIL', TRUE, 'DELETED', NOW(), NOW());
+VALUES ('00000000-0000-0000-0000-000000000000', 'deleted@ibetcha.internal', '_deleted_user_', '[Deleted User]', 'SYSTEM', TRUE, 'DELETED', NOW(), NOW());
+-- auth_provider = 'SYSTEM' is exempt from the ck_users_password_or_oauth constraint (no password hash or OAuth needed)
 ```
 
 **Trade-off:** Anonymization preserves bet history for other participants while removing all PII. The alternative (deleting all bets involving the user) would destroy other users' betting history and stats, which is not acceptable for the "bragging rights" core experience.
@@ -1521,18 +1541,19 @@ databaseChangeLog:
                   CONSTRAINT uq_users_email UNIQUE (email),
                   CONSTRAINT uq_users_username UNIQUE (username),
                   CONSTRAINT ck_users_username_format CHECK (username ~ '^[a-zA-Z0-9_.]{3,30}$'),
-                  CONSTRAINT ck_users_auth_provider CHECK (auth_provider IN ('EMAIL', 'GOOGLE', 'APPLE')),
+                  CONSTRAINT ck_users_auth_provider CHECK (auth_provider IN ('EMAIL', 'GOOGLE', 'APPLE', 'SYSTEM')),
                   CONSTRAINT ck_users_account_status CHECK (account_status IN ('ACTIVE', 'DELETION_PENDING', 'DELETED')),
                   CONSTRAINT ck_users_bio_length CHECK (LENGTH(bio) <= 150),
                   CONSTRAINT ck_users_password_or_oauth CHECK (
                       (auth_provider = 'EMAIL' AND password_hash IS NOT NULL)
-                      OR (auth_provider != 'EMAIL' AND provider_id IS NOT NULL)
+                      OR (auth_provider IN ('GOOGLE', 'APPLE') AND provider_id IS NOT NULL)
+                      OR (auth_provider = 'SYSTEM')
                   )
               );
 
-              -- Sentinel row for deleted users
+              -- Sentinel row for deleted users (auth_provider = 'SYSTEM' bypasses ck_users_password_or_oauth)
               INSERT INTO users (id, email, username, display_name, auth_provider, email_verified, account_status, created_at, updated_at)
-              VALUES ('00000000-0000-0000-0000-000000000000', 'deleted@ibetcha.internal', '_deleted_user_', '[Deleted User]', 'EMAIL', TRUE, 'DELETED', NOW(), NOW());
+              VALUES ('00000000-0000-0000-0000-000000000000', 'deleted@ibetcha.internal', '_deleted_user_', '[Deleted User]', 'SYSTEM', TRUE, 'DELETED', NOW(), NOW());
 
               CREATE INDEX idx_users_username_lower ON users (LOWER(username) varchar_pattern_ops);
               CREATE UNIQUE INDEX idx_users_provider_lookup ON users (auth_provider, provider_id) WHERE provider_id IS NOT NULL;
@@ -1593,6 +1614,8 @@ databaseChangeLog:
               CREATE INDEX idx_friendships_lower_active ON friendships (user_id_lower, status) WHERE status = 'ACTIVE';
               CREATE INDEX idx_friendships_higher_active ON friendships (user_id_higher, status) WHERE status = 'ACTIVE';
               CREATE INDEX idx_friendships_pending ON friendships (status, requester_id) WHERE status = 'PENDING';
+              CREATE INDEX idx_friendships_pending_lower ON friendships (user_id_lower) WHERE status = 'PENDING';
+              CREATE INDEX idx_friendships_pending_higher ON friendships (user_id_higher) WHERE status = 'PENDING';
       rollback:
         - sql:
             sql: DROP TABLE IF EXISTS friendships CASCADE;
@@ -1627,11 +1650,12 @@ databaseChangeLog:
                   id              UUID            PRIMARY KEY,
                   inviter_id      UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                   referral_code   VARCHAR(20)     NOT NULL,
-                  redeemed_by     UUID            REFERENCES users(id) ON DELETE SET NULL,
-                  redeemed_at     TIMESTAMPTZ,
                   created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
                   CONSTRAINT uq_invite_links_code UNIQUE (referral_code)
               );
+              -- Multi-use design: no redeemed_by/redeemed_at columns.
+              -- A link can be shared (e.g. WhatsApp) and clicked by multiple new users.
+              -- Redemption is tracked via the friendship created on registration, not here.
 
               CREATE INDEX idx_invite_links_inviter ON invite_links (inviter_id);
       rollback:
@@ -1659,6 +1683,7 @@ databaseChangeLog:
                   evidence_required       BOOLEAN         NOT NULL DEFAULT FALSE,
                   winner_id               UUID            REFERENCES users(id),
                   acceptance_deadline     TIMESTAMPTZ     NOT NULL,
+                  jury_deadline           TIMESTAMPTZ,
                   resolved_at             TIMESTAMPTZ,
                   version                 INTEGER         NOT NULL DEFAULT 0,
                   created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -1679,6 +1704,7 @@ databaseChangeLog:
               CREATE INDEX idx_bets_acceptance_deadline ON bets (acceptance_deadline) WHERE status = 'PENDING_ACCEPTANCE';
               CREATE INDEX idx_bets_creator ON bets (creator_id, status);
               CREATE INDEX idx_bets_jury_pending ON bets (jury_id) WHERE jury_id IS NOT NULL AND status IN ('PENDING_JURY_VERDICT');
+              CREATE INDEX idx_bets_jury_deadline ON bets (jury_deadline) WHERE status = 'PENDING_JURY_VERDICT';
               CREATE INDEX idx_bets_resolved ON bets (resolved_at DESC) WHERE status = 'RESOLVED';
               CREATE INDEX idx_bets_updated ON bets (updated_at DESC);
       rollback:
@@ -2074,7 +2100,6 @@ erDiagram
         UUID id PK
         UUID inviter_id FK
         VARCHAR referral_code UK
-        UUID redeemed_by FK
     }
 
     notifications {

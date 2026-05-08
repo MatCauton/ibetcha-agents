@@ -123,6 +123,6 @@ Phase 1 (Discovery)
 | Phase 2 — UX/Product | COMPLETE — PO output reviewed, PASS with 6 non-blocking warnings |
 | Phase 3 — Architecture | COMPLETE — 4 docs produced, 1 conflict to resolve (timeout scheduling) |
 | Phase 4 — Review | COMPLETE — all 4 PASS, alignment issues documented |
-| Phase 5 — Acceptance Tests | Not started |
+| Phase 5 — Acceptance Tests | COMPLETE — 189 scenarios, 14 feature files, 13 walking skeletons |
 | Phase 6 — Build | Not started |
 | Phase 7 — Ship | Not started |

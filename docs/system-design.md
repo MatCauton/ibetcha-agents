@@ -947,134 +947,119 @@ Additionally, reminders:
 - 24h before acceptance timeout: reminder to pending participants
 - 24h before jury timeout: reminder to jury
 
-### Options Analysis
+### Decision: Spring @Scheduled with DB Advisory Lock (Locked in phase3-decisions.md)
 
-| Option | Pros | Cons | Fit |
-|--------|------|------|-----|
-| **EventBridge Scheduler (recommended)** | Serverless, no infra to manage. Per-schedule pricing ($1/million). Exact-time delivery. Survives deployments. | AWS-specific. 1-minute minimum granularity (fine for hour-scale timeouts). | Best fit |
-| Spring `@Scheduled` poll | Simple. No external dependency. | Runs on a single task (or needs leader election for multi-task). Lost during deployments. Polling wastes CPU. Not scalable. | Poor fit |
-| SQS Delay Queues | Up to 15-minute delay built in. Familiar pattern. | Max delay is 15 minutes. 48h timeout requires re-queuing or visibility timeout tricks. Hacky for long delays. | Poor fit |
-| DynamoDB TTL + Streams | TTL-based expiration triggers a stream event. No polling. | Adds DynamoDB dependency (we use PostgreSQL). TTL deletion is best-effort (up to 48h delay). Unacceptable imprecision. | Poor fit |
-| Database polling (Spring `@Scheduled` with DB query) | Simple. Uses existing DB. No new components. | Polling interval vs precision trade-off. N tasks = N polls (waste). Leader election needed. | Acceptable fallback |
+**Rationale:** Spring `@Scheduled` is simpler than EventBridge Scheduler (no additional AWS service, no IAM permissions for scheduler API, no orphaned schedules to clean up when bets transition early). Sufficient for MVP with a single Fargate instance; scales to multiple instances with leader election.
 
-### Recommended: EventBridge Scheduler
-
-**How it works:**
+### How It Works
 
 ```
-Bet Created
+Every 60 seconds on the leader instance:
     |
     v
-API Server creates two EventBridge schedules:
-  1. "bet-{id}-reminder" at T+24h  -> invokes Lambda/API
-  2. "bet-{id}-expire"   at T+48h  -> invokes Lambda/API
+Acquire DB advisory lock ("bet-timeout-processor")
     |
-    v
-At T+24h: reminder fires
-  -> Check if bet is still PENDING
-  -> If yes: send reminder notifications to pending participants
-  -> If no (already all accepted or cancelled): delete both schedules (no-op)
+    +-- Lock NOT acquired (another instance holds it)
+    |   -> Return immediately (no-op)
     |
-    v
-At T+48h: expiry fires
-  -> Check if bet is still PENDING
-  -> If yes: transition bet to EXPIRED, notify all participants
-  -> If no: no-op
-  -> Delete both schedules (cleanup)
+    +-- Lock acquired
+        |
+        v
+    Query: SELECT * FROM bets
+           WHERE status = 'PENDING_ACCEPTANCE'
+             AND acceptance_deadline < NOW()
+           (uses idx_bets_acceptance_deadline partial index)
+        |
+        v
+    For each expired bet:
+        betService.expireBet(betId)
+        -> Transition to EXPIRED
+        -> Notify all participants via SQS
+        |
+        v
+    Query: SELECT * FROM bets
+           WHERE status = 'PENDING_JURY_VERDICT'
+             AND jury_deadline < NOW()
+           (uses idx_bets_jury_deadline partial index)
+        |
+        v
+    For each timed-out jury review:
+        betService.escalateJuryTimeout(betId)
+        -> Transition to PENDING_APPROVAL (majority vote)
+        -> Notify jury + participants via SQS
+        |
+        v
+    Release advisory lock
 ```
 
-**Same pattern for jury timeout:**
+**Same job handles reminders:**
+- 24h before `acceptance_deadline`: send reminder to pending participants
+- 24h before `jury_deadline`: send reminder to jury
 
-```
-Winner Declared (jury assigned)
-    |
-    v
-API Server creates two EventBridge schedules:
-  1. "jury-{betId}-reminder" at T+6d   -> reminder to jury
-  2. "jury-{betId}-timeout"  at T+7d   -> escalate to participant vote
-```
+### Leader Election: Database Advisory Lock
 
-**EventBridge Scheduler Configuration:**
-
-| Parameter | Value |
-|-----------|-------|
-| Schedule type | One-time (at specific datetime) |
-| Target | SQS queue (same notification queue, different message type) |
-| Retry policy | 3 retries with exponential backoff |
-| DLQ | Same DLQ as notification queue |
-| Flexible time window | OFF (exact delivery) |
-| Schedule group | `ibetcha-bet-timeouts` |
-
-**Why target SQS instead of directly invoking API/Lambda:**
-- SQS provides at-least-once delivery with retry
-- Same consumer infrastructure as notifications (no new component)
-- If the API is temporarily down, the message waits in SQS (not lost)
-- Trade-off: adds ~1-5s latency vs direct invocation. Acceptable for hour-scale timeouts.
-
-**Message format for timeout events:**
-
-```json
-{
-  "type": "BET_ACCEPTANCE_TIMEOUT",
-  "betId": "uuid",
-  "scheduledAt": "2026-05-10T14:30:00Z",
-  "action": "EXPIRE_BET"
+```java
+@Scheduled(fixedRate = 60000) // every 60 seconds
+@Transactional
+public void processBetTimeouts() {
+    // pg_try_advisory_xact_lock: released automatically at transaction end
+    if (!lockService.tryAcquireAdvisoryLock(TIMEOUT_LOCK_KEY)) {
+        return; // another instance holds the lock, skip this cycle
+    }
+    processAcceptanceTimeouts();
+    processJuryTimeouts();
+    processReminders();
+    processAccountDeletions();
 }
 ```
 
-**Idempotency:** The timeout handler MUST check current bet state before acting. The bet may have been accepted/cancelled between schedule creation and execution. The handler:
-1. Loads bet from DB
-2. Checks if state is still PENDING (for acceptance timeout) or AWAITING_JURY (for jury timeout)
-3. If state has changed: no-op, delete remaining schedules
+```sql
+-- Acquire advisory lock (non-blocking; returns false if already held)
+SELECT pg_try_advisory_xact_lock(12345678);
+-- Lock is released automatically when the transaction commits/rolls back
+```
+
+**Why advisory locks over other leader election mechanisms:**
+- Uses existing PostgreSQL infrastructure (no Redis, no ZooKeeper)
+- Transaction-scoped: lock is automatically released if the instance crashes mid-run
+- `pg_try_advisory_xact_lock` is non-blocking: if the lock is held, returns immediately
+
+**Implications for multi-instance scaling:**
+- At 2+ Fargate tasks: only one instance runs the scheduler per 60-second cycle. The other instances skip that cycle. This is intentional and correct.
+- The application is NOT fully stateless when running multiple instances -- one instance holds the scheduling lock. This is a deliberate trade-off, acknowledged in phase3-decisions.md. The stateless verification checklist (Section 5) should note this exception.
+- If the lock-holding instance restarts during a run, the transaction rolls back, releasing the lock. The next 60-second cycle will be picked up by any available instance.
+
+**Deployment gap:** During rolling deployment, no instance may hold the scheduler lock for 30-60 seconds. For 48h and 7d timeouts, a 60-second gap is completely acceptable. Timeouts are delayed but never lost.
+
+**No orphan cleanup needed:** Unlike EventBridge, `@Scheduled` polls the DB. When a bet is accepted or the jury approves, the next scheduler run simply finds no rows matching the timeout condition. No cleanup logic required.
+
+### Idempotency
+
+The timeout handler MUST check current bet state before acting:
+1. Load bet from DB
+2. Check if state is still `PENDING_ACCEPTANCE` (for acceptance timeout) or `PENDING_JURY_VERDICT` (for jury timeout)
+3. If state has changed: no-op (bet was already resolved/cancelled)
 4. If state matches: transition state, send notifications
 
-**Schedule Cleanup:** When a bet is accepted (all participants), cancelled, or jury approves -- delete the associated EventBridge schedules to avoid orphaned schedules. Use the deterministic naming convention (`bet-{id}-expire`, `jury-{betId}-timeout`) for cleanup.
-
-**Cost:** EventBridge Scheduler: $1.00 per million schedules created. At 9,000 bets/day * 2 schedules = 18,000/day = 540K/month. Cost: $0.54/month. Negligible.
+This handles the race condition where a bet is accepted between the scheduler query and the expiry update.
 
 ### Substrate Probe (Earned Trust)
 
 **Probe: `SchedulerSubstrateProbe.probe()`**
-- At startup, create a test schedule 2 minutes in the future targeting SQS
-- Verify the schedule was created successfully (API returns 200)
-- Do NOT wait for execution (2 min is too long for startup)
-- Verify the schedule group exists
-- Verify IAM permissions allow CreateSchedule, DeleteSchedule, GetSchedule
-- If probe fails: log `health.startup.degraded: EventBridge Scheduler unavailable`. Do not refuse to start -- bet creation still works, but timeouts will not fire. Set monitoring alert.
+- At startup, attempt to acquire and release the DB advisory lock
+- Verify lock can be acquired (`SELECT pg_try_advisory_xact_lock(?)` returns true)
+- Verify lock is released after transaction
+- If probe fails: log `health.startup.degraded: DB advisory lock unavailable`. Do not refuse to start -- bet creation still works, but timeouts will not fire. Set monitoring alert.
+- Note: if the DB probe has already passed, this probe should succeed; the advisory lock uses the same DB connection.
 
-### Fallback: Database Polling (if EventBridge is rejected)
+### Options Analysis (Historical Reference)
 
-If the team prefers to avoid EventBridge Scheduler, the fallback is:
-
-```java
-@Scheduled(fixedRate = 60000) // every 60 seconds
-public void processBetTimeouts() {
-    List<Bet> expiredBets = betRepository.findByStatusAndExpiresAtBefore(
-        BetStatus.PENDING, Instant.now()
-    );
-    for (Bet bet : expiredBets) {
-        betService.expireBet(bet.getId());
-    }
-}
-```
-
-**With leader election via database advisory lock:**
-```java
-@Scheduled(fixedRate = 60000)
-public void processBetTimeouts() {
-    if (!lockService.tryAcquire("bet-timeout-processor")) {
-        return; // another instance holds the lock
-    }
-    // ... process timeouts
-}
-```
-
-**Trade-offs vs EventBridge:**
-- Simpler (no new AWS service)
-- But: polling every 60s on a table that grows to millions of rows is wasteful. Must add an index on `(status, expires_at)` and ensure it is used.
-- Leader election adds complexity and failure modes
-- Deployment gap: during rolling deployment, no instance may hold the lock for 30-60s. Timeouts are delayed but not lost.
-- Verdict: acceptable for MVP if team wants fewer AWS services. Switch to EventBridge for public launch.
+| Option | Pros | Cons | Decision |
+|--------|------|------|----------|
+| **Spring `@Scheduled` with DB advisory lock** | Simple. No additional AWS service. No orphan cleanup. DB is already a dependency. | Application not fully stateless with multiple instances. Polling adds trivial DB load. | **Selected (phase3-decisions.md)** |
+| EventBridge Scheduler | Precise timing. Serverless. Survives deployments independently. | Additional AWS service. Schedules must be deleted when bets transition early (orphan risk). $0.54/month at launch. | Rejected for MVP simplicity |
+| SQS Delay Queues | Familiar pattern. | Max 15-minute delay. 48h timeouts require re-queuing tricks. | Poor fit |
+| DynamoDB TTL + Streams | TTL-based, no polling. | Adds DynamoDB dependency. TTL deletion has up to 48h imprecision. | Poor fit |
 
 ---
 
@@ -1093,7 +1078,6 @@ public void processBetTimeouts() {
 | **NAT Gateway** | 1 gateway, < 5 GB processed | $35 |
 | **Secrets Manager** | 7 secrets | $3 |
 | **SQS** | < 100K messages/month | $0 (free tier) |
-| **EventBridge Scheduler** | < 10K schedules/month | $0 (free tier) |
 | **CloudWatch** | Logs + metrics + alarms | $5 |
 | **ECR** | < 2 GB images stored | $0 (free tier) |
 | **Lambda** | < 1K invocations/month | $0 (free tier) |
@@ -1122,7 +1106,6 @@ public void processBetTimeouts() {
 | **NAT Gateway** | 2 gateways, ~50 GB/month processed | $90 |
 | **Secrets Manager** | 7 secrets | $3 |
 | **SQS** | ~3M messages/month | $1 |
-| **EventBridge Scheduler** | ~540K schedules/month | $1 |
 | **CloudWatch** | Logs (~11 GB/day) + metrics + alarms + dashboards | $30 |
 | **ECR** | < 5 GB images | $1 |
 | **Lambda** | ~55K invocations/month (thumbnails) | $1 |
@@ -1150,7 +1133,7 @@ Public Launch ($392/month):
   Compute (Fargate + ALB)      $79   20%
   Operations (CW, X-Ray, WAF)  $52   13%
   Storage (S3, ECR)            $13    3%
-  Other (SQS, EB, SM, etc)     $7    2%
+  Other (SQS, SM, etc)         $6    2%
 ```
 
 ### Cost Optimization Opportunities
@@ -1194,14 +1177,14 @@ Public Launch ($392/month):
 **Trade-off:** More complex client-side code. Must handle presigned URL expiration.
 **Revisit when:** Need server-side virus scanning before storage (add Lambda trigger post-upload).
 
-### ADR-004: Bet Timeout Scheduling -- EventBridge Scheduler
+### ADR-004: Bet Timeout Scheduling -- Spring @Scheduled with DB Advisory Lock
 
-**Status:** Accepted
+**Status:** Accepted (supersedes earlier draft that recommended EventBridge Scheduler)
 **Context:** Bets expire after 48h if not accepted. Jury verdicts timeout after 7 days.
-**Decision:** EventBridge Scheduler creates one-time schedules targeting SQS.
-**Rationale:** Precise timing, serverless (no polling), survives deployments, $0.54/month at public launch. Database polling wastes CPU and requires leader election for multi-instance.
-**Trade-off:** Additional AWS service dependency. Schedules must be cleaned up when bets transition early.
-**Revisit when:** Timeout precision requirements change to sub-minute (unlikely for this domain).
+**Decision:** Spring `@Scheduled` polling the database every 60 seconds, with PostgreSQL advisory lock for leader election at multi-instance scale. Locked in phase3-decisions.md.
+**Rationale:** No additional AWS service required. Uses existing PostgreSQL infrastructure for leader election. No orphaned schedules to clean up when bets transition early (polling is inherently idempotent). Timeout precision of ±60s is more than sufficient for hour-scale timeouts.
+**Trade-off:** Application is not fully stateless when running multiple Fargate instances (one holds the leader lock). 60-second polling adds trivial DB load (one indexed query per cycle).
+**Revisit when:** Sub-minute timeout precision is required, or when operational preference shifts to a pure-stateless architecture.
 
 ### ADR-005: No Cache Layer for MVP
 
@@ -1224,7 +1207,7 @@ Per the Earned Trust principle, every infrastructure component must verify its s
 | SQS | SendMessage + ReceiveMessage + DeleteMessage on test message | Queue missing, IAM denied | Refuse to start |
 | S3 | PutObject + GetObject + HeadObject on test key | Bucket missing, IAM denied, encryption misconfigured | Refuse to start |
 | S3 presigned URL | Generate presigned URL, HEAD it | Presigned URL policy misconfigured | Refuse to start |
-| EventBridge Scheduler | CreateSchedule + DeleteSchedule | IAM denied, scheduler API unavailable | Degraded (log warning, do not refuse) |
+| DB Advisory Lock (Scheduler) | pg_try_advisory_xact_lock + release | Lock mechanism unavailable (unlikely if DB probe passes) | Degraded (log warning, do not refuse) |
 | Secrets Manager | GetSecretValue for each secret | Secret missing, IAM denied | Refuse to start |
 | FCM | Send test notification to known test token | FCM credentials invalid, project misconfigured | Degraded (log warning) |
 | CloudWatch | PutMetricData with test metric | IAM denied, region misconfigured | Degraded (log warning) |

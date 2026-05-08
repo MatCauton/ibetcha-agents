@@ -1564,7 +1564,7 @@ Request Flow:
 | Jury approve/reject | Designated jury only, bet in PENDING_JURY_VERDICT status |
 | Concede | Participant in DISPUTED bet |
 | View friend's profile | Must be friends (blocked users get 404) |
-| Upload evidence | Participant in ACTIVE or COMPLETING bet |
+| Upload evidence | Participant in ACTIVE or PENDING_APPROVAL bet |
 | Block user | Any authenticated user |
 | Delete account | Account owner only (re-authentication required) |
 
