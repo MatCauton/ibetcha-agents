@@ -1,6 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { storageGet, storageSet, storageDelete } from '../utils/storage';
 
 const BASE_URL = Platform.select({
   android: 'http://10.0.2.2:8080/api/v1',
@@ -39,7 +39,7 @@ function processQueue(error: unknown, token: string | null) {
 // Request interceptor: attach access token
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const token = await SecureStore.getItemAsync(TOKEN_KEY);
+    const token = await storageGet(TOKEN_KEY);
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -87,7 +87,7 @@ apiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+      const refreshToken = await storageGet(REFRESH_TOKEN_KEY);
       if (!refreshToken) {
         throw new Error('No refresh token');
       }
@@ -98,8 +98,8 @@ apiClient.interceptors.response.use(
 
       const { accessToken, refreshToken: newRefreshToken } = response.data;
 
-      await SecureStore.setItemAsync(TOKEN_KEY, accessToken);
-      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, newRefreshToken);
+      await storageSet(TOKEN_KEY, accessToken);
+      await storageSet(REFRESH_TOKEN_KEY, newRefreshToken);
 
       processQueue(null, accessToken);
 
@@ -112,8 +112,8 @@ apiClient.interceptors.response.use(
       processQueue(refreshError, null);
 
       // Clear tokens on refresh failure
-      await SecureStore.deleteItemAsync(TOKEN_KEY);
-      await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+      await storageDelete(TOKEN_KEY);
+      await storageDelete(REFRESH_TOKEN_KEY);
 
       // The auth store listener will handle redirect to login
       return Promise.reject(refreshError);
@@ -128,19 +128,19 @@ export async function setTokens(
   accessToken: string,
   refreshToken: string,
 ): Promise<void> {
-  await SecureStore.setItemAsync(TOKEN_KEY, accessToken);
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+  await storageSet(TOKEN_KEY, accessToken);
+  await storageSet(REFRESH_TOKEN_KEY, refreshToken);
 }
 
 export async function clearTokens(): Promise<void> {
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  await storageDelete(TOKEN_KEY);
+  await storageDelete(REFRESH_TOKEN_KEY);
 }
 
 export async function getAccessToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(TOKEN_KEY);
+  return storageGet(TOKEN_KEY);
 }
 
 export async function getRefreshToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  return storageGet(REFRESH_TOKEN_KEY);
 }

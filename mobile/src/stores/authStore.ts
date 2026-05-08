@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import * as SecureStore from 'expo-secure-store';
+import { storageGet, storageSet, storageDelete } from '../utils/storage';
 import type { User } from '../types/domain';
 import * as authApi from '../api/auth';
 import { setTokens, clearTokens, getAccessToken, getRefreshToken } from '../api/client';
@@ -34,7 +34,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   initialize: async () => {
     try {
       const token = await getAccessToken();
-      const userJson = await SecureStore.getItemAsync(USER_STORAGE_KEY);
+      const userJson = await storageGet(USER_STORAGE_KEY);
 
       if (token && userJson) {
         const user = JSON.parse(userJson) as User;
@@ -45,7 +45,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
       // On any error during init, treat as not authenticated
       await clearTokens();
-      await SecureStore.deleteItemAsync(USER_STORAGE_KEY);
+      await storageDelete(USER_STORAGE_KEY);
       set({ isInitialized: true, isAuthenticated: false, user: null });
     }
   },
@@ -55,10 +55,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await authApi.login(data);
       await setTokens(response.accessToken, response.refreshToken);
-      await SecureStore.setItemAsync(
-        USER_STORAGE_KEY,
-        JSON.stringify(response.user),
-      );
+      await storageSet(USER_STORAGE_KEY, JSON.stringify(response.user));
       set({
         user: response.user,
         isAuthenticated: true,
@@ -77,7 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await authApi.register(data);
       await setTokens(response.accessToken, response.refreshToken);
-      await SecureStore.setItemAsync(USER_STORAGE_KEY, JSON.stringify(response.user));
+      await storageSet(USER_STORAGE_KEY, JSON.stringify(response.user));
       set({ user: response.user, isAuthenticated: true, isLoading: false });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Could not create account';
@@ -91,7 +88,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await authApi.loginWithGoogle(idToken);
       await setTokens(response.accessToken, response.refreshToken);
-      await SecureStore.setItemAsync(USER_STORAGE_KEY, JSON.stringify(response.user));
+      await storageSet(USER_STORAGE_KEY, JSON.stringify(response.user));
       set({ user: response.user, isAuthenticated: true, isLoading: false });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Google sign-in failed';
@@ -105,7 +102,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const response = await authApi.loginWithApple(identityToken, authorizationCode);
       await setTokens(response.accessToken, response.refreshToken);
-      await SecureStore.setItemAsync(USER_STORAGE_KEY, JSON.stringify(response.user));
+      await storageSet(USER_STORAGE_KEY, JSON.stringify(response.user));
       set({ user: response.user, isAuthenticated: true, isLoading: false });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Apple sign-in failed';
@@ -124,7 +121,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     } finally {
       await clearTokens();
-      await SecureStore.deleteItemAsync(USER_STORAGE_KEY);
+      await storageDelete(USER_STORAGE_KEY);
       set({
         user: null,
         isAuthenticated: false,
@@ -134,7 +131,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setUser: (user: User) => {
-    SecureStore.setItemAsync(USER_STORAGE_KEY, JSON.stringify(user));
+    storageSet(USER_STORAGE_KEY, JSON.stringify(user));
     set({ user });
   },
 

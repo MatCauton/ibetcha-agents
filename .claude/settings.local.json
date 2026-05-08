@@ -11,7 +11,9 @@
       "PowerShell(Get-ChildItem \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\mobile\" | Where-Object { $_.Name -ne \"node_modules\" } | Select-Object Name, PSIsContainer)",
       "PowerShell(Get-ChildItem \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\mobile\\\\app\\\\bet\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName, Length)",
       "PowerShell(ls \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\mobile\\\\app\\\\bet\" -Recurse | Where-Object { !$_.PSIsContainer } | Format-Table Name, Length -AutoSize)",
-      "PowerShell(ls \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\backend\\\\src\\\\main\\\\java\\\\com\\\\ibetcha\\\\wagering\" -Recurse | Where-Object { $_.Extension -eq \".java\" } | Select-Object Name | Sort-Object Name)"
+      "PowerShell(ls \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\backend\\\\src\\\\main\\\\java\\\\com\\\\ibetcha\\\\wagering\" -Recurse | Where-Object { $_.Extension -eq \".java\" } | Select-Object Name | Sort-Object Name)",
+      "PowerShell(ls \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\backend\\\\src\\\\main\\\\java\\\\com\\\\ibetcha\\\\social\" -Recurse | Where-Object { !$_.PSIsContainer } | Format-Table Name -AutoSize)",
+      "Bash(npm install *)"
     ]
   }
 }

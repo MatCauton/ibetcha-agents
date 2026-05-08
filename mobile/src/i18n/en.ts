@@ -131,6 +131,14 @@ const en = {
   winCardHeadToHead: "You're {wins}-{losses} against {name} all time",
   winCardShareMessage: 'I won the bet: {description}. Stake: {stake}. – iBetcha',
 
+  // Invite
+  inviteAFriend: 'Invite a friend',
+  inviteAccept: 'Add Friend',
+  inviteAlreadyFriends: "You're already friends!",
+  inviteInvalid: 'This invite link is invalid.',
+  inviteSuccess: 'Friend request sent!',
+  inviteSignUpToConnect: 'Sign up to connect',
+
   // Errors
   networkError: 'Network error. Please check your connection.',
   sessionExpired: 'Session expired. Please log in again.',

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Share } from 'react-native';
 import { FriendshipStatus } from '../types/domain';
 import type { Friend, FriendRequest } from '../types/domain';
 import type { UserSearchResult } from '../types/api';
@@ -14,6 +15,8 @@ interface FriendState {
   error: string | null;
   hasMore: boolean;
   cursor: string | undefined;
+  inviteCode: string | null;
+  inviteLoading: boolean;
 
   fetchFriends: (refresh?: boolean) => Promise<void>;
   fetchFriendRequests: () => Promise<void>;
@@ -24,6 +27,7 @@ interface FriendState {
   removeFriend: (userId: string) => Promise<void>;
   clearSearch: () => void;
   clearError: () => void;
+  shareInviteLink: () => Promise<void>;
 }
 
 export const useFriendStore = create<FriendState>((set, get) => ({
@@ -36,6 +40,8 @@ export const useFriendStore = create<FriendState>((set, get) => ({
   error: null,
   hasMore: false,
   cursor: undefined,
+  inviteCode: null,
+  inviteLoading: false,
 
   fetchFriends: async (refresh = false) => {
     if (refresh) {
@@ -163,4 +169,17 @@ export const useFriendStore = create<FriendState>((set, get) => ({
 
   clearSearch: () => set({ searchResults: [] }),
   clearError: () => set({ error: null }),
+
+  shareInviteLink: async () => {
+    set({ inviteLoading: true });
+    try {
+      const invite = await friendsApi.createInviteLink();
+      set({ inviteCode: invite.code, inviteLoading: false });
+      await Share.share({
+        message: `Join me on iBetcha! 🎯 Tap to add me as a friend: ${invite.inviteUrl}`,
+      });
+    } catch {
+      set({ inviteLoading: false });
+    }
+  },
 }));

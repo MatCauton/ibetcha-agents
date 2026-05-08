@@ -29,6 +29,7 @@ export default function FriendsScreen() {
     isLoading,
     isRefreshing,
     isSearching,
+    inviteLoading,
     fetchFriends,
     fetchFriendRequests,
     searchUsers,
@@ -36,6 +37,7 @@ export default function FriendsScreen() {
     acceptRequest,
     declineRequest,
     clearSearch,
+    shareInviteLink,
   } = useFriendStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -90,6 +92,19 @@ export default function FriendsScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Invite button */}
+      <TouchableOpacity
+        style={styles.inviteButton}
+        onPress={shareInviteLink}
+        disabled={inviteLoading}
+      >
+        {inviteLoading ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <Text style={styles.inviteButtonText}>{t('inviteAFriend')}</Text>
+        )}
+      </TouchableOpacity>
+
       {/* Search bar */}
       <View style={styles.searchContainer}>
         <TextInput
@@ -228,6 +243,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  inviteButton: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+    backgroundColor: colors.primaryLight,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  inviteButtonText: {
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.semibold,
+    color: colors.primaryDark,
   },
   centered: {
     flex: 1,

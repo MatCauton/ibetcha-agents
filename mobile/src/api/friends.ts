@@ -8,6 +8,18 @@ import type {
   InviteResponse,
 } from '../types/api';
 
+export interface InviteInfo {
+  code: string;
+  inviterDisplayName: string;
+  inviterUsername: string;
+}
+
+export interface InviteLink {
+  code: string;
+  inviteUrl: string;
+  inviterId: string;
+}
+
 export async function fetchFriends(params?: {
   search?: string;
   cursor?: string;
@@ -64,5 +76,25 @@ export async function removeFriend(userId: string): Promise<void> {
 
 export async function generateInvite(): Promise<InviteResponse> {
   const response = await apiClient.post<InviteResponse>('/friends/invite');
+  return response.data;
+}
+
+export async function createInviteLink(): Promise<InviteLink> {
+  const response = await apiClient.post<InviteLink>('/invites');
+  return response.data;
+}
+
+export async function getInviteInfo(code: string): Promise<InviteInfo> {
+  const response = await apiClient.get<InviteInfo>(`/invites/${code}`);
+  return response.data;
+}
+
+export async function acceptInvite(
+  code: string,
+): Promise<{ requestSent: boolean; alreadyFriends: boolean }> {
+  const response = await apiClient.post<{
+    requestSent: boolean;
+    alreadyFriends: boolean;
+  }>(`/invites/${code}/accept`);
   return response.data;
 }

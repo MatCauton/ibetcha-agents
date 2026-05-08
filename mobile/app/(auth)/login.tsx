@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,8 +11,6 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
-import * as AppleAuthentication from 'expo-apple-authentication';
 import Constants from 'expo-constants';
 import { Input } from '../../src/components/Input';
 import { Button } from '../../src/components/Button';
@@ -21,15 +19,29 @@ import { colors } from '../../src/theme/colors';
 import { spacing, fontSize, fontWeight } from '../../src/theme/spacing';
 import { t } from '../../src/i18n';
 
-// Configure Google Sign-In once when module loads
-GoogleSignin.configure({
-  webClientId: (Constants.expoConfig?.extra?.googleWebClientId as string | undefined) ?? '',
-});
+// Lazy-require native-only modules so Metro doesn't try to bundle them on web
+const GoogleSignin =
+  Platform.OS !== 'web'
+    ? (require('@react-native-google-signin/google-signin') as typeof import('@react-native-google-signin/google-signin')).GoogleSignin
+    : null;
+
+const AppleAuthentication =
+  Platform.OS === 'ios'
+    ? (require('expo-apple-authentication') as typeof import('expo-apple-authentication'))
+    : null;
 
 export default function LoginScreen() {
   const router = useRouter();
   const { login, loginWithGoogle, loginWithApple, isLoading, error, clearError } =
     useAuthStore();
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      GoogleSignin?.configure({
+        webClientId: (Constants.expoConfig?.extra?.googleWebClientId as string | undefined) ?? '',
+      });
+    }
+  }, []);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -68,6 +80,7 @@ export default function LoginScreen() {
   }
 
   async function handleGoogleSignIn() {
+    if (!GoogleSignin) return;
     clearError();
     try {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
@@ -87,6 +100,7 @@ export default function LoginScreen() {
   }
 
   async function handleAppleSignIn() {
+    if (!AppleAuthentication) return;
     clearError();
     try {
       const credential = await AppleAuthentication.signInAsync({
@@ -191,7 +205,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {/* Apple Sign-In — iOS only */}
-          {Platform.OS === 'ios' && (
+          {Platform.OS === 'ios' && AppleAuthentication && (
             <AppleAuthentication.AppleAuthenticationButton
               buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
               buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
