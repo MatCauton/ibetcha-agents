@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ibetcha-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ibetcha
+      POSTGRES_USER: ibetcha
+      POSTGRES_PASSWORD: ibetcha_dev
+    volumes:
+      - ibetcha-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ibetcha"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ibetcha-pgdata:

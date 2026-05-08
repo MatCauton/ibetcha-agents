@@ -124,5 +124,5 @@ Phase 1 (Discovery)
 | Phase 3 — Architecture | COMPLETE — 4 docs produced, 1 conflict to resolve (timeout scheduling) |
 | Phase 4 — Review | COMPLETE — all 4 PASS, alignment issues documented |
 | Phase 5 — Acceptance Tests | COMPLETE — 189 scenarios, 14 feature files, 13 walking skeletons |
-| Phase 6 — Build | Not started |
+| Phase 6 — Build | IN PROGRESS — Walking Skeleton 1 complete (backend + frontend compile clean) |
 | Phase 7 — Ship | Not started |

@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: ibetcha
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ibetcha
+    username: ibetcha
+    password: ibetcha_dev
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+    enabled: true
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+
+ibetcha:
+  jwt:
+    issuer: ibetcha
+    access-token-expiry-minutes: 15
+    refresh-token-expiry-days: 30
+  s3:
+    bucket-name: ibetcha-evidence
+    region: eu-west-1
+    presigned-url-expiry-minutes: 15

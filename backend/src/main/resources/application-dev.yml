@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ibetcha
+    username: ibetcha
+    password: ibetcha_dev
+  jpa:
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: true
+
+logging:
+  level:
+    com.ibetcha: DEBUG
+    org.hibernate.SQL: DEBUG

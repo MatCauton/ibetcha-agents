@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - include:
+      file: db/changelog/changes/001-identity-schema.sql
+      relativeToChangelogFile: false
+  - include:
+      file: db/changelog/changes/002-social-schema.sql
+      relativeToChangelogFile: false
+  - include:
+      file: db/changelog/changes/003-wagering-schema.sql
+      relativeToChangelogFile: false
+  - include:
+      file: db/changelog/changes/004-reputation-schema.sql
+      relativeToChangelogFile: false
+  - include:
+      file: db/changelog/changes/005-notification-schema.sql
+      relativeToChangelogFile: false

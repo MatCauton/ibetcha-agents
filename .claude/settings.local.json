@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-expo-app@latest *)",
+      "Bash(where node *)",
+      "Bash(where npx *)",
+      "Bash(npx --version)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(npx create-expo-app@latest mobile --template blank-typescript --no-install 2>&1)",
+      "PowerShell(Get-ChildItem \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\mobile\" -Directory | Where-Object { $_.Name -ne \"node_modules\" } | Select-Object Name)",
+      "PowerShell(Get-ChildItem \"C:\\\\Projects\\\\Axxes\\\\iBetcha-agents\\\\mobile\" | Where-Object { $_.Name -ne \"node_modules\" } | Select-Object Name, PSIsContainer)"
+    ]
+  }
+}
